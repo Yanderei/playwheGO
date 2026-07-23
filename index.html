@@ -129,6 +129,37 @@
   .status-ok{color:var(--green);}
   .status-bad{color:var(--muted);}
 
+  .heard-label{
+    font-family:'Space Grotesk', sans-serif;
+    font-weight:600;
+    font-size:13px;
+    margin-bottom:8px;
+  }
+  .heard-group{margin-bottom:12px;}
+  .heard-group-title{
+    font-size:11px;
+    color:var(--muted);
+    margin-bottom:5px;
+  }
+  .heard-row{display:flex; gap:6px; flex-wrap:wrap;}
+  .heard-box{
+    width:46px;
+    height:40px;
+    text-align:center;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:14px;
+    font-weight:600;
+    border:1.5px solid var(--line);
+    border-radius:8px;
+    background:var(--card);
+    color:var(--ink);
+    text-transform:uppercase;
+  }
+  .heard-box:focus{outline:2px solid var(--gold); border-color:var(--gold);}
+  .heard-box.match{border-color:var(--green); background:var(--green-bg);}
+  .heard-box.mismatch{border-color:var(--red); background:var(--red-bg);}
+  .heard-note{font-size:11px; color:var(--muted); margin-top:6px;}
+
   .time-grid{display:grid; grid-template-columns:1fr 1fr; gap:8px;}
   .time-btn{
     font-family:'Space Grotesk', sans-serif;
@@ -293,7 +324,19 @@
   </div>
 
   <div class="step">
-    <div class="step-label">3 · Your message</div>
+    <div class="step-label">3 · Confirm against the livestream (optional)</div>
+    <div class="stream-wrap">
+      <a class="copy-btn" style="display:block; text-align:center; text-decoration:none;" href="https://www.ttt.live/stream/" target="_blank" rel="noopener">Open TTT Live Stream ↗</a>
+      <div class="heard-note" style="margin-top:8px;">Tego's player blocks being embedded on other sites, so this opens the stream in a new tab instead. Come back here and fill in the boxes below with what you hear.</div>
+    </div>
+    <div id="heard-wrap" style="margin-top:14px;">
+      <div class="heard-label">What I heard on the stream:</div>
+      <div id="heard-inputs"></div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-label">4 · Your message</div>
     <div id="banners"></div>
     <div class="output-box" id="output">Pick a draw time above to generate a message.</div>
     <div class="copy-row">
@@ -529,6 +572,7 @@ function reparseAll(){
   refreshStatus('pick2', state.pick2);
   refreshStatus('pick4', state.pick4);
   refreshStatus('cashpot', state.cashpot);
+  if(typeof checkHeardMatches === 'function') checkHeardMatches();
   render();
 }
 
@@ -542,6 +586,7 @@ document.querySelectorAll('.time-btn').forEach(btn=>{
     btn.classList.add('active');
     state.selectedSlot = btn.dataset.slot;
     document.getElementById('sub-toggle').style.display = state.selectedSlot === 'evening' ? 'flex' : 'none';
+    renderHeardInputs();
     render();
   });
 });
@@ -551,15 +596,110 @@ document.querySelectorAll('#sub-toggle button').forEach(btn=>{
     document.querySelectorAll('#sub-toggle button').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
     state.subMessage = btn.dataset.sub;
+    renderHeardInputs();
     render();
   });
 });
+
+// "What I heard" — a boxed template the person fills in by ear while
+// watching the stream, checked live against whatever was scraped/pasted
+// for the same slot. Never auto-fills from scraped data — this stays a
+// fully independent, human-entered second source.
+let heardValues = {};
+
+function heardField(id, width){
+  const w = width || 46;
+  return `<input class="heard-box" style="width:${w}px" maxlength="3" data-field="${id}" value="${heardValues[id] || ''}">`;
+}
+
+function renderHeardInputs(){
+  const container = document.getElementById('heard-inputs');
+  if(!state.selectedSlot){
+    container.innerHTML = '<div class="heard-note">Pick a draw time above first.</div>';
+    return;
+  }
+  const isCashpot = state.selectedSlot === 'evening' && state.subMessage === '2';
+  let html = '';
+  if(isCashpot){
+    html += `<div class="heard-group"><div class="heard-group-title">Cash Pot</div><div class="heard-row">
+      ${['cp1','cp2','cp3','cp4','cp5'].map(id=>heardField(id)).join('')}
+    </div></div>`;
+    html += `<div class="heard-group"><div class="heard-group-title">Multiplier</div><div class="heard-row">
+      ${heardField('mult', 60)}
+    </div></div>`;
+  } else {
+    html += `<div class="heard-group"><div class="heard-group-title">Play Whe (number + 3 codes)</div><div class="heard-row">
+      ${heardField('pwMark')} ${heardField('pwB1')} ${heardField('pwB2')} ${heardField('pwB3')}
+    </div></div>`;
+    html += `<div class="heard-group"><div class="heard-group-title">Play Whe Jackpot</div><div class="heard-row">
+      ${['pwJ1','pwJ2','pwJ3','pwJ4','pwJ5'].map(id=>heardField(id)).join('')}
+    </div></div>`;
+    html += `<div class="heard-group"><div class="heard-group-title">Pick Two (2 numbers + code)</div><div class="heard-row">
+      ${heardField('p2A')} ${heardField('p2B')} ${heardField('p2Suf')}
+    </div></div>`;
+    html += `<div class="heard-group"><div class="heard-group-title">Pick Four (4 digits)</div><div class="heard-row">
+      ${heardField('p4A',40)} ${heardField('p4B',40)} ${heardField('p4C',40)} ${heardField('p4D',40)}
+    </div></div>`;
+  }
+  container.innerHTML = html;
+  container.querySelectorAll('.heard-box').forEach(box=>{
+    box.addEventListener('input', ()=>{
+      heardValues[box.dataset.field] = box.value.trim().toUpperCase();
+      checkHeardMatches();
+    });
+  });
+  checkHeardMatches();
+}
+
+function markBox(id, expected){
+  const box = document.querySelector(`.heard-box[data-field="${id}"]`);
+  if(!box) return;
+  box.classList.remove('match','mismatch');
+  const heard = (heardValues[id] || '').trim();
+  if(!heard || expected === undefined || expected === null || expected === '') return;
+  if(heard === String(expected).toUpperCase()){
+    box.classList.add('match');
+  } else {
+    box.classList.add('mismatch');
+  }
+}
+
+function checkHeardMatches(){
+  if(!state.selectedSlot) return;
+  const isCashpot = state.selectedSlot === 'evening' && state.subMessage === '2';
+  if(isCashpot){
+    const cp = state.cashpot;
+    const nums = (cp && cp.parsed) ? cp.nums : [];
+    ['cp1','cp2','cp3','cp4','cp5'].forEach((id,i)=>markBox(id, nums[i]));
+    markBox('mult', cp && cp.parsed ? cp.multiplier : undefined);
+  } else {
+    const pw = state.playwhe && state.playwhe.draws[state.selectedSlot];
+    const p2 = state.pick2 && state.pick2.draws[state.selectedSlot];
+    const p4 = state.pick4 && state.pick4.draws[state.selectedSlot];
+    markBox('pwMark', pw && pw.mark);
+    markBox('pwB1', pw && displayCode(pw.badges[0]));
+    markBox('pwB2', pw && displayCode(pw.badges[1]));
+    markBox('pwB3', pw && displayCode(pw.badges[2]));
+    ['pwJ1','pwJ2','pwJ3','pwJ4','pwJ5'].forEach((id,i)=>markBox(id, pw && pw.jackpot[i]));
+    markBox('p2A', p2 && p2.a);
+    markBox('p2B', p2 && p2.b);
+    markBox('p2Suf', p2 && displayCode(p2.suffix));
+    markBox('p4A', p4 && p4.a);
+    markBox('p4B', p4 && p4.b);
+    markBox('p4C', p4 && p4.c);
+    markBox('p4D', p4 && p4.d);
+  }
+}
+
+renderHeardInputs();
 
 document.getElementById('clear-btn').addEventListener('click', ()=>{
   ['src-playwhe','src-pick2','src-pick4','src-cashpot'].forEach(id=>document.getElementById(id).value='');
   const statusEl = document.getElementById('load-all-status');
   statusEl.textContent = '';
   statusEl.className = 'status-line';
+  heardValues = {};
+  renderHeardInputs();
   reparseAll();
 });
 
@@ -602,11 +742,19 @@ const SOURCE_URLS = {
 // service first (it fetches server-side and returns clean text, so it
 // isn't subject to the browser's CORS restrictions at all), then fall
 // back to raw-HTML proxies if that doesn't work.
+// NOTE: r.jina.ai caches pages aggressively (often ~24h) to reduce load
+// on its own service — without cache-busting, it can hand back yesterday's
+// snapshot instead of today's actual results. Every fetch appends a fresh
+// timestamp param so Jina treats it as a new URL and re-fetches for real.
 const PROXIES = [
   {mode:'text', build: url => 'https://r.jina.ai/' + url},
   {mode:'html', build: url => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url)},
   {mode:'html', build: url => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(url)}
 ];
+
+function cacheBust(url){
+  return url + (url.includes('?') ? '&' : '?') + '_cb=' + Date.now();
+}
 
 async function fetchWithTimeout(url, ms){
   const controller = new AbortController();
@@ -623,9 +771,10 @@ async function fetchWithTimeout(url, ms){
 
 async function fetchSourceText(targetUrl){
   let lastError = null;
+  const bustedUrl = cacheBust(targetUrl);
   for(const proxy of PROXIES){
     try{
-      const res = await fetchWithTimeout(proxy.build(targetUrl), 20000);
+      const res = await fetchWithTimeout(proxy.build(bustedUrl), 20000);
       if(!res.ok) { lastError = new Error('HTTP '+res.status); continue; }
       let text;
       if(proxy.mode === 'html'){
