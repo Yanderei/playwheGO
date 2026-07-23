@@ -556,6 +556,9 @@ document.querySelectorAll('#sub-toggle button').forEach(btn=>{
 
 document.getElementById('clear-btn').addEventListener('click', ()=>{
   ['src-playwhe','src-pick2','src-pick4','src-cashpot'].forEach(id=>document.getElementById(id).value='');
+  const statusEl = document.getElementById('load-all-status');
+  statusEl.textContent = '';
+  statusEl.className = 'status-line';
   reparseAll();
 });
 
